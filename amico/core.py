@@ -67,7 +67,6 @@ class Evaluation :
     def get_config( self, key ) :
         return self.CONFIG.get( key )
 
-
     def load_data( self, dwi_filename = 'DWI.nii', 
                    scheme_filename = 'DWI.scheme', mask_filename = None, b0_thr = 0 ) :
         """Load the diffusion signal and its corresponding acquisition scheme.
@@ -92,11 +91,13 @@ class Evaluation :
         self.set_config('dwi_filename', dwi_filename)
         self.niiDWI  = nibabel.load( pjoin( self.get_config('DATA_path'), dwi_filename) )
         self.niiDWI_img = self.niiDWI.get_data().astype(np.float32)
+        if len(self.niiDWI_img.shape) < 4:
+            self.niiDWI_img = self.niiDWI_img.reshape(1, 1, 1, self.niiDWI_img.shape[0])
         hdr = self.niiDWI.header if nibabel.__version__ >= '2.0.0' else self.niiDWI.get_header()
         self.set_config('dim', self.niiDWI_img.shape[:3])
         self.set_config('pixdim', tuple( hdr.get_zooms()[:3] ))
-        print '\t\t- dim    = %d x %d x %d x %d' % self.niiDWI_img.shape
-        print '\t\t- pixdim = %.3f x %.3f x %.3f' % self.get_config('pixdim')
+        #print '\t\t- dim    = %d x %d x %d x %d' % self.niiDWI_img.shape
+        #print '\t\t- pixdim = %.3f x %.3f x %.3f' % self.get_config('pixdim')
         # Scale signal intensities (if necessary)
         if ( np.isfinite(hdr['scl_slope']) and np.isfinite(hdr['scl_inter']) and hdr['scl_slope'] != 0 and
             ( hdr['scl_slope'] != 1 or hdr['scl_inter'] != 0 ) ):
@@ -160,24 +161,35 @@ class Evaluation :
 
         print '   [ %.1f seconds ]' % ( time.time() - tic )
 
-
-    def set_model( self, model_name ) :
-        """Set the model to use to describe the signal contributions in each voxel.
+    def set_model(self, model):
+        """Set the model to use to describe the signal contributions in each
+        voxel.
 
         Parameters
         ----------
-        model_name : string
-            The name of the model (must match a class name in "amico.models" module)
+        model : class or string
+            Class of the model (must extend AMICO.models or match a class name 
+            in AMICO.models module)
         """
-        # Call the specific model constructor
-        if hasattr(amico.models, model_name ) :
-            self.model = getattr(amico.models,model_name)()
-        else :
-            raise ValueError( 'Model "%s" not recognized' % model_name )
+        if isinstance(model, basestring):
+            if hasattr(amico.models, model):
+                model_class = getattr(amico.models, model)
+            else:
+                raise ValueError('Model {} not in amico.models'.format(model))
+        else:
+            if issubclass(model, amico.models.FreeWater):
+                model_class = model
+            else:
+                raise ValueError('Model {} does not extend BaseModel'.
+                                 format(model.__name__))
 
-        self.set_config('ATOMS_path', pjoin( self.get_config('study_path'), 'kernels', self.model.id ))
+        self.model = model_class()
 
-        # setup default parameters for fitting the model (can be changed later on)
+        self.set_config('ATOMS_path', pjoin(self.get_config('study_path'),
+                                            'kernels', self.model.id))
+
+        # setup default parameters for fitting the model
+        # (can be changed later on)
         self.set_solver()
 
 
@@ -276,7 +288,7 @@ class Evaluation :
         # setup fitting directions
         peaks_filename = self.get_config('peaks_filename')
         if peaks_filename is None :
-            DIRs = np.zeros( [self.get_config('dim')[0], self.get_config('dim')[1], self.get_config('dim')[2], 3], dtype=np.float32 )
+            DIRs = np.zeros([self.get_config('dim')[0], self.get_config('dim')[1], self.get_config('dim')[2], 3], dtype=np.float32 )
             nDIR = 1
             if self.get_config('doMergeB0'):
                 gtab = gradient_table( np.hstack((0,self.scheme.b[self.scheme.dwi_idx])), np.vstack((np.zeros((1,3)),self.scheme.raw[self.scheme.dwi_idx,:3])) )
@@ -284,22 +296,24 @@ class Evaluation :
                 gtab = gradient_table( self.scheme.b, self.scheme.raw[:,:3] )
             DTI = dti.TensorModel( gtab )
         else :
-            niiPEAKS = nibabel.load( pjoin( self.get_config('DATA_path'), peaks_filename) )
+            niiPEAKS = nibabel.load(pjoin(self.get_config('DATA_path'),
+                                          peaks_filename))
             DIRs = niiPEAKS.get_data().astype(np.float32)
-            nDIR = np.floor( DIRs.shape[3]/3 )
+            nDIR = np.floor(DIRs.shape[3] / 3)
             print '\t* peaks dim = %d x %d x %d x %d' % DIRs.shape[:4]
-            if DIRs.shape[:3] != self.niiMASK_img.shape[:3] :
+            if DIRs.shape[:3] != self.niiMASK_img.shape[:3]:
                 raise ValueError( 'PEAKS geometry does not match with DWI data' )
 
         # setup other output files
-        MAPs = np.zeros( [self.get_config('dim')[0], self.get_config('dim')[1], 
-                          self.get_config('dim')[2], len(self.model.maps_name)], dtype=np.float32 )
+        MAPs = np.zeros([self.get_config('dim')[0], self.get_config('dim')[1],
+                         self.get_config('dim')[2], len(self.model.maps_name)],
+                         dtype=np.float32)
 
-        if self.get_config('doComputeNRMSE') :
+        if self.get_config('doComputeNRMSE'):
             NRMSE = np.zeros( [self.get_config('dim')[0], 
                                self.get_config('dim')[1], self.get_config('dim')[2]], dtype=np.float32 )
             
-        if self.get_config('doSaveCorrectedDWI') :
+        if self.get_config('doSaveCorrectedDWI'):
             DWI_corrected = np.zeros(self.niiDWI.shape, dtype=np.float32)
 
 
@@ -321,10 +335,14 @@ class Evaluation :
                     if peaks_filename is None :
                         dirs = DTI.fit( y ).directions[0]
                     else :
-                        dirs = DIRs[ix,iy,iz,:]
+                        dirs = DIRs[ix, iy, iz, :]
 
                     # dispatch to the right handler for each model
-                    MAPs[ix,iy,iz,:], DIRs[ix,iy,iz,:], x, A = self.model.fit( y, dirs.reshape(-1,3), self.KERNELS, self.get_config('solver_params') )
+                    MAPs[ix, iy, iz, :], _, x, A = \
+                        self.model.fit(y,
+                                       dirs.reshape(-1, 3),
+                                       self.KERNELS,
+                                       self.get_config('solver_params'))
 
                     # compute fitting error
                     if self.get_config('doComputeNRMSE') :
@@ -348,9 +366,8 @@ class Evaluation :
                                 # put original b0 data back in. 
                                 y_fw_corrected[self.scheme.b0_idx] = y[self.scheme.b0_idx]*self.mean_b0s[ix,iy,iz]
 
-                            DWI_corrected[ix,iy,iz,:] = y_fw_corrected
+                            DWI_corrected[ix, iy, iz, :] = y_fw_corrected
 
-                            
                     progress.update()
 
         self.set_config('fit_time', time.time()-t)
@@ -358,8 +375,8 @@ class Evaluation :
 
         # store results
         self.RESULTS = {}
-        self.RESULTS['DIRs']  = DIRs
-        self.RESULTS['MAPs']  = MAPs
+        self.RESULTS['DIRs'] = DIRs
+        self.RESULTS['MAPs'] = MAPs
         if self.get_config('doComputeNRMSE') :
             self.RESULTS['NRMSE'] = NRMSE
         if self.get_config('doSaveCorrectedDWI') :

@@ -321,7 +321,6 @@ class CylinderZeppelinBall( BaseModel ) :
         params['lambda2'] = lambda2
         return params
 
-
     def generate( self, out_path, aux, idx_in, idx_out ) :
         if self.scheme.version != 1 :
             raise RuntimeError( 'This model requires a "VERSION: STEJSKALTANNER" scheme.' )
@@ -415,7 +414,6 @@ class CylinderZeppelinBall( BaseModel ) :
 
         return KERNELS
 
-
     def fit( self, y, dirs, KERNELS, params ) :
         nD = dirs.shape[0]
         n1 = len(self.Rs)
@@ -452,7 +450,7 @@ class CylinderZeppelinBall( BaseModel ) :
         xIC = x[:nD*n1].reshape(-1,n1).sum(axis=0)
         a = 1E6 * 2.0 * np.dot(self.Rs,xIC) / ( f1 + 1e-16 )
         d = (4.0*v) / ( np.pi*a**2 + 1e-16 )
-        return [v, a, d], dirs, x, A
+        return [v, a, d], dirs.reshape(15), x, A
 
 
 
@@ -1139,7 +1137,6 @@ class FreeWater( BaseModel ) :
 
         return KERNELS
 
-
     def fit( self, y, dirs, KERNELS, params ) :
         nD = dirs.shape[0]
         if nD > 1 : # model works only with one direction
@@ -1157,6 +1154,7 @@ class FreeWater( BaseModel ) :
         A[:,:(nD*n1)] = KERNELS['D'][:,i1,i2,:].T
         A[:,(nD*n1):] = KERNELS['CSF'].T
 
+        #print A
         # fit
         x = spams.lasso( np.asfortranarray( y.reshape(-1,1) ), D=A, **params ).todense().A1
 
@@ -1171,11 +1169,12 @@ class FreeWater( BaseModel ) :
             return [ v, 1-v, v_blood, v_csf ], dirs, x, A
 
         else :
-            return [ v, 1-v ], dirs, x, A
+            self.v = v
+            self.ndirs = len(dirs)
+            return [v, 1-v], dirs, x, A
 
 
-
-class VolumeFractions( BaseModel ) :
+class VolumeFractions(BaseModel):
     """Implements a simple model where each compartment contributes only with
        its own volume fraction. This model has been created to test there
        ability to remove false positive fibers with COMMIT.
